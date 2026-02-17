@@ -13,4 +13,5 @@ debug/
 
 # Keep .sqlx/ directory but ignore the database file
 .sqlx/*.db
+.sqlx/*.json
 
