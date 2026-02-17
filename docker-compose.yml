@@ -6,7 +6,7 @@ services:
     volumes:
       - ironshare-data:/data
     environment:
-      - DATABASE_URL=sqlite:///data/ironshare.db
+      - DATABASE_URL=sqlite:///data/ironshare.db?mode=rwc
       - IRONSHARE_HOST=0.0.0.0
       - IRONSHARE_PORT=3000
       - RUST_LOG=ironshare=info

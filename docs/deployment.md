@@ -33,11 +33,13 @@ Override defaults via environment variables in `docker-compose.yml`:
 
 ```yaml
 environment:
-  - DATABASE_URL=sqlite:/data/ironshare.db
+  - DATABASE_URL=sqlite:///data/ironshare.db?mode=rwc
   - IRONSHARE_HOST=0.0.0.0
   - IRONSHARE_PORT=3000
   - RUST_LOG=info
 ```
+
+> **`?mode=rwc` is required.** SQLite's default open mode is read-only when the file doesn't exist. Without it, the container crashes on first start with `SqliteError { code: 14, message: "unable to open database file" }`. The `rwc` mode (read-write-create) tells SQLite to create the file if missing — which is always the case on a fresh volume.
 
 ### Data Persistence
 
@@ -103,7 +105,7 @@ sudo nano /etc/ironshare.env
 ```
 
 ```bash
-DATABASE_URL=sqlite:/var/lib/ironshare/ironshare.db
+DATABASE_URL=sqlite:///var/lib/ironshare/ironshare.db?mode=rwc
 IRONSHARE_HOST=127.0.0.1
 IRONSHARE_PORT=3000
 RUST_LOG=info
@@ -320,6 +322,20 @@ sudo systemctl status ironshare
 ---
 
 ## Troubleshooting
+
+### Container crashes immediately (Docker)
+
+If `docker compose logs` shows:
+
+```
+Error: Database(SqliteError { code: 14, message: "unable to open database file" })
+```
+
+The `DATABASE_URL` is missing `?mode=rwc`. SQLite won't create a new database file unless explicitly told to. Ensure the value in `docker-compose.yml` is:
+
+```
+DATABASE_URL=sqlite:///data/ironshare.db?mode=rwc
+```
 
 ### Service won't start
 

@@ -24,7 +24,7 @@ RUN mkdir -p /data && chown ironshare:ironshare /data
 
 USER ironshare
 
-ENV DATABASE_URL=sqlite:///data/ironshare.db
+ENV DATABASE_URL=sqlite:///data/ironshare.db?mode=rwc
 ENV IRONSHARE_HOST=0.0.0.0
 ENV IRONSHARE_PORT=3000
 

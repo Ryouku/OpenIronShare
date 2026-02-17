@@ -14,9 +14,31 @@
 ```bash
 git clone <repository-url>
 cd ironshare
+```
 
-# Build in development mode
-cargo build
+**Before building**, you must generate the sqlx offline query cache. The `sqlx::query!` macros verify SQL against the database schema at compile time. Without the cache, `cargo build` fails with:
+
+```
+error: set `DATABASE_URL` to use query macros online, or run `cargo sqlx prepare` to update the query cache
+```
+
+Generate it once after cloning:
+
+```bash
+# Install sqlx-cli if you don't have it
+cargo install sqlx-cli --no-default-features --features sqlite
+
+# Generate the offline query cache (requires the db file to exist)
+DATABASE_URL="sqlite:./ironshare.db" cargo sqlx prepare
+```
+
+This writes `.sqlx/*.json` files that must be committed to version control so the build works without a live database. The `.gitignore` in this repo currently excludes them — if you clone a fresh copy and the `.sqlx/` directory is missing or empty, re-run the command above.
+
+Once the cache exists, build normally:
+
+```bash
+# Build in development mode (uses SQLX_OFFLINE automatically via the .sqlx cache)
+SQLX_OFFLINE=true cargo build
 
 # Run development server
 cargo run
@@ -653,8 +675,17 @@ refactor: Simplify database transaction handling
 cargo clean
 
 # Rebuild from scratch
-cargo build
+SQLX_OFFLINE=true cargo build
 ```
+
+**`error: set DATABASE_URL to use query macros`** — The `.sqlx/` offline cache is missing or stale. Run:
+
+```bash
+DATABASE_URL="sqlite:./ironshare.db" cargo sqlx prepare
+```
+
+Then rebuild with `SQLX_OFFLINE=true cargo build`.
+
 
 ### Database Locked Errors
 
