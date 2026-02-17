@@ -1,0 +1,44 @@
+[Unit]
+Description=IronShare - Secure One-Time Secret Sharing
+After=network.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=ironshare
+Group=ironshare
+
+WorkingDirectory=/opt/ironshare
+ExecStart=/opt/ironshare/ironshare
+Restart=on-failure
+RestartSec=5
+
+# Environment
+Environment=DATABASE_URL=sqlite:///opt/ironshare/data/ironshare.db
+Environment=IRONSHARE_HOST=127.0.0.1
+Environment=IRONSHARE_PORT=3000
+Environment=RUST_LOG=ironshare=info
+
+# Hardening
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+ReadWritePaths=/opt/ironshare/data
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+RestrictNamespaces=yes
+LockPersonality=yes
+MemoryDenyWriteExecute=yes
+RestrictRealtime=yes
+RestrictSUIDSGID=yes
+SystemCallArchitectures=native
+
+# Resource limits
+LimitNOFILE=65536
+
+[Install]
+WantedBy=multi-user.target

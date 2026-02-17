@@ -1,0 +1,16 @@
+target/
+debug/
+**/*.rs.bk
+*.pdb
+**/mutants.out*/
+
+*.db
+.env
+.env.*
+
+.idea/
+.cursor/
+
+# Keep .sqlx/ directory but ignore the database file
+.sqlx/*.db
+

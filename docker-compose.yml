@@ -1,0 +1,16 @@
+services:
+  ironshare:
+    build: .
+    ports:
+      - "3000:3000"
+    volumes:
+      - ironshare-data:/data
+    environment:
+      - DATABASE_URL=sqlite:///data/ironshare.db
+      - IRONSHARE_HOST=0.0.0.0
+      - IRONSHARE_PORT=3000
+      - RUST_LOG=ironshare=info
+    restart: unless-stopped
+
+volumes:
+  ironshare-data:

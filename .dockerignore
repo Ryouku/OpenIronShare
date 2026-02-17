@@ -1,0 +1,12 @@
+
+target/
+.git/
+.gitignore
+*.db
+*.md
+docs/
+nginx/
+deploy/
+.cursor/
+.idea/
+
