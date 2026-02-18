@@ -61,8 +61,8 @@ Content-Type: application/json
 | `ciphertext` | string | Yes | - | Base64-encoded AES-GCM ciphertext |
 | `iv` | string | Yes | - | Base64-encoded initialization vector (12 bytes) |
 | `salt` | string | Yes | - | Base64-encoded PBKDF2 salt (16 bytes) |
-| `max_views` | integer | No | 1 | Maximum views before deletion (0 = unlimited) |
-| `ttl_minutes` | integer | No | 60 | Time-to-live in minutes |
+| `max_views` | integer | No | 1 | Maximum views before deletion (0 = unlimited, max 5) |
+| `ttl_minutes` | integer | No | 60 | Time-to-live in minutes (min 1, max 180 = 3 hours) |
 
 **Response**: `201 Created`
 

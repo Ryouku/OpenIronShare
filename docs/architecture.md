@@ -91,7 +91,7 @@ Global middleware: body limit (128 KB), tracing, security headers (CSP, X-Frame-
 
 All mutations use explicit SQLite transactions:
 
-- **`store_secret()`** — insert with circuit-breaker check (max 100k active secrets)
+- **`store_secret()`** — insert with circuit-breaker check (max 100,000 active secrets)
 - **`fetch_and_increment_view()`** — atomic fetch + increment + conditional delete (burn-after-reading)
 - **`check_secret_exists()`** — read-only, no view consumed
 - **`purge_expired()`** — background cleanup, runs every 15 minutes
@@ -105,7 +105,7 @@ ViewResponse  → { ciphertext, iv, salt, expires_at, remaining_views, total_vie
 SecretRow     → database row
 ```
 
-Validation constants: max ciphertext 50 KB, max TTL 7 days, max views 100.
+Validation constants: max ciphertext 50 KB, max TTL 3 hours (180 min), max views 5.
 
 ### 5. Configuration (`src/config.rs`)
 
