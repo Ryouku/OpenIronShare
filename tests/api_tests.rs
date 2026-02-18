@@ -6,6 +6,7 @@ use serde_json::{json, Value};
 use sqlx::sqlite::SqlitePoolOptions;
 use std::sync::Arc;
 use tower::ServiceExt;
+use sqlx::{Pool, Sqlite};
 
 async fn setup_app() -> axum::Router {
     let pool = SqlitePoolOptions::new()
@@ -491,4 +492,308 @@ async fn circuit_breaker_ignores_expired_secrets() {
     .await
     .unwrap();
     assert!(stored, "Expired secrets should not count toward limit");
+}
+
+// ─── Expiration ───
+
+#[tokio::test]
+async fn expired_secret_returns_gone_on_retrieve() {
+    let pool = setup_pool().await;
+    let expired_at = time::OffsetDateTime::now_utc().unix_timestamp() - 1;
+    sqlx::query(
+        "INSERT INTO secrets (id, ciphertext, iv, salt, max_views, views, expires_at, created_at) VALUES ('exp_ret', 'ct', 'iv', 'salt', 1, 0, ?, strftime('%s', 'now'))"
+    )
+    .bind(expired_at)
+    .execute(&pool)
+    .await
+    .unwrap();
+
+    let app = ironshare::handlers::router(Arc::new(pool));
+    let resp = app.oneshot(post_empty("/api/secret/exp_ret")).await.unwrap();
+    assert_eq!(resp.status(), StatusCode::GONE);
+}
+
+#[tokio::test]
+async fn expired_secret_returns_gone_on_check() {
+    let pool = setup_pool().await;
+    let expired_at = time::OffsetDateTime::now_utc().unix_timestamp() - 1;
+    sqlx::query(
+        "INSERT INTO secrets (id, ciphertext, iv, salt, max_views, views, expires_at, created_at) VALUES ('exp_chk', 'ct', 'iv', 'salt', 1, 0, ?, strftime('%s', 'now'))"
+    )
+    .bind(expired_at)
+    .execute(&pool)
+    .await
+    .unwrap();
+
+    let app = ironshare::handlers::router(Arc::new(pool));
+    let resp = app.oneshot(get("/api/secret/exp_chk/check")).await.unwrap();
+    assert_eq!(resp.status(), StatusCode::GONE);
+}
+
+// ─── Purge Expired (db layer) ───
+
+#[tokio::test]
+async fn purge_deletes_expired_and_keeps_active() {
+    let pool = setup_pool().await;
+    let now = time::OffsetDateTime::now_utc().unix_timestamp();
+
+    sqlx::query(
+        "INSERT INTO secrets (id, ciphertext, iv, salt, max_views, views, expires_at, created_at) VALUES ('keep', 'ct', 'iv', 'salt', 1, 0, ?, ?)"
+    )
+    .bind(now + 3600)
+    .bind(now)
+    .execute(&pool)
+    .await
+    .unwrap();
+
+    sqlx::query(
+        "INSERT INTO secrets (id, ciphertext, iv, salt, max_views, views, expires_at, created_at) VALUES ('purge1', 'ct', 'iv', 'salt', 1, 0, ?, ?)"
+    )
+    .bind(now - 100)
+    .bind(now - 200)
+    .execute(&pool)
+    .await
+    .unwrap();
+
+    sqlx::query(
+        "INSERT INTO secrets (id, ciphertext, iv, salt, max_views, views, expires_at, created_at) VALUES ('purge2', 'ct', 'iv', 'salt', 1, 0, ?, ?)"
+    )
+    .bind(now - 50)
+    .bind(now - 200)
+    .execute(&pool)
+    .await
+    .unwrap();
+
+    let deleted = ironshare::db::purge_expired(&pool).await.unwrap();
+    assert_eq!(deleted, 2);
+
+    let remaining: (i64,) = sqlx::query_as("SELECT COUNT(*) FROM secrets")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(remaining.0, 1);
+
+    let row = ironshare::db::check_secret_exists(&pool, "keep").await.unwrap();
+    assert!(row.is_some());
+}
+
+// ─── Security Headers ───
+
+#[tokio::test]
+async fn responses_include_security_headers() {
+    let app = setup_app().await;
+    let resp = app.oneshot(get("/health")).await.unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+
+    let headers = resp.headers();
+    assert_eq!(
+        headers.get("x-frame-options").unwrap(),
+        "DENY"
+    );
+    assert_eq!(
+        headers.get("x-content-type-options").unwrap(),
+        "nosniff"
+    );
+    assert_eq!(
+        headers.get("referrer-policy").unwrap(),
+        "no-referrer"
+    );
+    assert!(
+        headers.get("content-security-policy").is_some(),
+        "CSP header must be present"
+    );
+    let csp = headers.get("content-security-policy").unwrap().to_str().unwrap();
+    assert!(csp.contains("default-src 'none'"));
+    assert!(csp.contains("script-src 'self'"));
+}
+
+// ─── Static Asset: /crypto.js ───
+
+#[tokio::test]
+async fn crypto_js_returns_javascript() {
+    let app = setup_app().await;
+    let resp = app.oneshot(get("/crypto.js")).await.unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+
+    let ct = resp.headers().get("content-type").unwrap().to_str().unwrap();
+    assert!(ct.contains("javascript"), "Expected JavaScript content-type, got: {}", ct);
+
+    let body = resp.into_body().collect().await.unwrap().to_bytes();
+    let text = String::from_utf8(body.to_vec()).unwrap();
+    assert!(text.contains("IronCrypto"), "crypto.js must define IronCrypto");
+    assert!(text.contains("600"), "crypto.js must reference 600k iterations");
+}
+
+// ─── Oversized ID Rejection ───
+
+#[tokio::test]
+async fn retrieve_rejects_oversized_id() {
+    let app = setup_app().await;
+    let long_id = "A".repeat(51);
+    let resp = app
+        .clone()
+        .oneshot(post_empty(&format!("/api/secret/{}", long_id)))
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+    let json = body_json(resp).await;
+    assert!(json["message"].as_str().unwrap().contains("Invalid"));
+}
+
+#[tokio::test]
+async fn check_rejects_oversized_id() {
+    let app = setup_app().await;
+    let long_id = "A".repeat(51);
+    let resp = app
+        .oneshot(get(&format!("/api/secret/{}/check", long_id)))
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+}
+
+// ─── Malformed Input ───
+
+#[tokio::test]
+async fn store_rejects_invalid_json() {
+    let app = setup_app().await;
+    let mut req = Request::builder()
+        .method("POST")
+        .uri("/api/secret")
+        .header("Content-Type", "application/json")
+        .body(Body::from("not valid json {{{"))
+        .unwrap();
+    req.extensions_mut()
+        .insert(axum::extract::ConnectInfo(SocketAddr::from(([127, 0, 0, 1], 0))));
+
+    let resp = app.oneshot(req).await.unwrap();
+    assert!(
+        resp.status() == StatusCode::BAD_REQUEST || resp.status() == StatusCode::UNPROCESSABLE_ENTITY,
+        "Expected 400 or 422 for malformed JSON, got {}",
+        resp.status()
+    );
+}
+
+#[tokio::test]
+async fn store_rejects_missing_required_fields() {
+    let app = setup_app().await;
+    let payload = json!({ "ciphertext": "abc" });
+    let resp = app.oneshot(post_json("/api/secret", payload)).await.unwrap();
+    assert!(
+        resp.status() == StatusCode::BAD_REQUEST || resp.status() == StatusCode::UNPROCESSABLE_ENTITY,
+        "Expected 400 or 422 for missing fields, got {}",
+        resp.status()
+    );
+}
+
+// ─── Concurrent View Counting ───
+
+#[tokio::test]
+async fn concurrent_reads_never_exceed_max_views() {
+    let pool = setup_pool().await;
+    let pool = Arc::new(pool);
+    let expires_at = (time::OffsetDateTime::now_utc() + time::Duration::hours(1)).unix_timestamp();
+
+    ironshare::db::store_secret(
+        &pool, "race_test", "ct", "iv", "salt", 3, expires_at, 1000,
+    )
+    .await
+    .unwrap();
+
+    let mut handles = Vec::new();
+    for _ in 0..20 {
+        let p = pool.clone();
+        handles.push(tokio::spawn(async move {
+            ironshare::db::fetch_and_increment_view(&p, "race_test").await
+        }));
+    }
+
+    let results: Vec<_> = futures::future::join_all(handles).await;
+    let successes = results
+        .iter()
+        .filter(|r| matches!(r.as_ref().unwrap(), Ok(Some(_))))
+        .count();
+
+    assert_eq!(
+        successes, 3,
+        "Exactly max_views (3) requests should succeed, got {}",
+        successes
+    );
+}
+
+// ─── DB Layer: check_secret_exists ───
+
+#[tokio::test]
+async fn check_exists_returns_none_when_views_exhausted() {
+    let pool = setup_pool().await;
+    let now = time::OffsetDateTime::now_utc().unix_timestamp();
+
+    sqlx::query(
+        "INSERT INTO secrets (id, ciphertext, iv, salt, max_views, views, expires_at, created_at) VALUES ('used_up', 'ct', 'iv', 'salt', 2, 2, ?, ?)"
+    )
+    .bind(now + 3600)
+    .bind(now)
+    .execute(&pool)
+    .await
+    .unwrap();
+
+    let result = ironshare::db::check_secret_exists(&pool, "used_up").await.unwrap();
+    assert!(result.is_none(), "Should return None when views exhausted");
+}
+
+#[tokio::test]
+async fn check_exists_returns_data_for_unlimited_views() {
+    let pool = setup_pool().await;
+    let now = time::OffsetDateTime::now_utc().unix_timestamp();
+
+    sqlx::query(
+        "INSERT INTO secrets (id, ciphertext, iv, salt, max_views, views, expires_at, created_at) VALUES ('unlim', 'ct', 'iv', 'salt', 0, 999, ?, ?)"
+    )
+    .bind(now + 3600)
+    .bind(now)
+    .execute(&pool)
+    .await
+    .unwrap();
+
+    let result = ironshare::db::check_secret_exists(&pool, "unlim").await.unwrap();
+    assert!(result.is_some(), "Unlimited secret should always be available");
+}
+
+// ─── Validation Error Messages ───
+
+#[tokio::test]
+async fn validation_errors_include_descriptive_messages() {
+    let app = setup_app().await;
+
+    let cases = vec![
+        (json!({"ciphertext": "", "iv": "x", "salt": "x", "max_views": 1, "ttl_minutes": 60}), "empty"),
+        (json!({"ciphertext": "x", "iv": "x", "salt": "x", "max_views": -1, "ttl_minutes": 60}), "negative"),
+        (json!({"ciphertext": "x", "iv": "x", "salt": "x", "max_views": 1, "ttl_minutes": 0}), "TTL"),
+    ];
+
+    for (payload, label) in cases {
+        let resp = app
+            .clone()
+            .oneshot(post_json("/api/secret", payload))
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::BAD_REQUEST, "Case: {}", label);
+        let json = body_json(resp).await;
+        assert!(
+            json["message"].is_string() && !json["message"].as_str().unwrap().is_empty(),
+            "Error for '{}' should have a non-empty message",
+            label
+        );
+        assert_eq!(json["status"], "error");
+    }
+}
+
+// ─── Helper: shared pool setup ───
+
+async fn setup_pool() -> Pool<Sqlite> {
+    let pool = SqlitePoolOptions::new()
+        .connect("sqlite::memory:")
+        .await
+        .unwrap();
+    sqlx::migrate!("./migrations").run(&pool).await.unwrap();
+    pool
 }

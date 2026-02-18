@@ -2,397 +2,176 @@
 
 ## Threat Model
 
-IronShare is designed to protect secrets from:
+IronShare protects secrets from:
 
-1. **Server compromise**: Even if the server is fully compromised, secrets remain encrypted
-2. **Database leaks**: Stolen database dumps contain only encrypted data
-3. **Network eavesdropping**: Secrets transmitted only in encrypted form (+ use HTTPS)
-4. **Unauthorized access**: Burn-after-reading and time limits restrict access
+1. **Server compromise** — secrets remain encrypted; the server never holds keys
+2. **Database leaks** — stolen dumps contain only ciphertext + public parameters
+3. **Network eavesdropping** — only encrypted blobs transit the wire (+ HTTPS)
+4. **Unauthorized access** — burn-after-reading and TTL restrict the attack window
 
-**Out of Scope**:
-- Client-side compromise (malware, keyloggers)
-- Phishing attacks targeting PINs
-- Compromised browsers or browser extensions
-- Physical access to recipient's device
+**Out of scope**: client-side compromise (malware, keyloggers), phishing, compromised browsers, physical device access.
 
 ## Zero-Knowledge Architecture
 
-### What This Means
+The server has zero knowledge of:
+- Plaintext content
+- Encryption passphrase
+- Derived encryption keys
 
-**Zero-Knowledge** = Server has zero knowledge of:
-- The plaintext content
-- The encryption PIN/passphrase
-- The derived encryption keys
-
-### How It's Achieved
-
-1. **Client-Side Encryption**: All crypto happens client-side via WebCrypto API
-2. **No Key Transmission**: PIN never leaves the client
-3. **No Server-Side Decryption**: Server cannot decrypt even if compromised
-4. **Separate Communication**: Secret ID and PIN shared via different channels
-
-### Trust Boundaries
+All cryptographic operations run client-side via the WebCrypto API. The passphrase never leaves the client.
 
 ```
-┌─────────────────────────────────────────────┐
-│  TRUSTED: Client Application + Device      │
-│  - Encryption/Decryption                    │
-│  - Key derivation                           │
-│  - PIN storage (temporary)                  │
-└─────────────────────────────────────────────┘
+┌──────────────────────────────────────────────┐
+│  TRUSTED: Client Application + Device        │
+│  - Key derivation (PBKDF2)                   │
+│  - Encryption / Decryption (AES-256-GCM)     │
+│  - Passphrase storage (temporary, in-memory) │
+└──────────────────────────────────────────────┘
                     ↓
-┌─────────────────────────────────────────────┐
-│  UNTRUSTED: Server + Network + Database     │
-│  - Only sees encrypted blobs                │
-│  - Cannot derive keys                       │
-│  - Cannot decrypt                           │
-└─────────────────────────────────────────────┘
+┌──────────────────────────────────────────────┐
+│  UNTRUSTED: Server + Network + Database      │
+│  - Stores only encrypted blobs               │
+│  - Cannot derive keys                        │
+│  - Cannot decrypt                            │
+└──────────────────────────────────────────────┘
 ```
 
 ## Cryptographic Design
 
-### Encryption Algorithm
+### Encryption: AES-256-GCM
 
-**AES-256-GCM** (Galois/Counter Mode)
+- **Key size**: 256 bits
+- **IV size**: 96 bits (12 bytes), random per encryption
+- **Authentication**: built-in GCM tag (128 bits) — tamper-evident
+- **Standard**: NIST SP 800-38D
 
-- **Key Size**: 256 bits (maximum AES security)
-- **Mode**: GCM (provides authentication + encryption)
-- **Authentication**: Built-in tamper detection
-- **IV Size**: 96 bits (12 bytes) - recommended for GCM
+### Key Derivation: PBKDF2-SHA256
 
-**Properties**:
-- ✅ AEAD (Authenticated Encryption with Associated Data)
-- ✅ Tamper-evident (any modification → decryption fails)
-- ✅ Industry standard (NIST approved)
-- ✅ Hardware acceleration on modern CPUs
+| Parameter | Value |
+|-----------|-------|
+| Algorithm | PBKDF2 |
+| Hash | SHA-256 |
+| Iterations | 600,000 |
+| Salt | 128 bits (16 bytes), random per secret |
+| Output | 256-bit AES key |
 
-### Key Derivation
+**Why 600,000 iterations**: NIST SP 800-132 (2023 revision) recommends a minimum of 600,000 for PBKDF2-SHA256. The previous default of 100,000 is no longer considered adequate given modern GPU throughput.
 
-**PBKDF2-SHA256**
+**Why PBKDF2 instead of Argon2**: The WebCrypto API (W3C standard) does not expose Argon2. PBKDF2 is the strongest KDF available in browsers without importing external libraries. Argon2 would be preferable for server-side hashing but is not applicable here since key derivation happens client-side.
 
-- **Algorithm**: PBKDF2 (Password-Based Key Derivation Function 2)
-- **Hash**: SHA-256
-- **Iterations**: 100,000
-- **Salt Size**: 128 bits (16 bytes)
-- **Output**: 256-bit AES key
+### Passphrase Entropy vs. Brute-Force Cost
 
-**Why PBKDF2**:
-- ✅ Widely supported (WebCrypto API)
-- ✅ Proven security track record
-- ✅ Adjustable iteration count
-- ✅ NIST recommended (SP 800-132)
+The table below estimates offline brute-force time against a single secret, assuming an attacker has the ciphertext, salt, and IV (i.e., full database dump), using a high-end GPU rig capable of ~1 million PBKDF2-SHA256 (600k iterations) hashes/second.
 
-**Iteration Count Rationale**:
-- 100,000 iterations balance security vs. performance
-- Acceptable delay (~100ms on modern devices)
-- Raises cost of brute-force attacks
-- Can be increased in future versions
+| Passphrase type | Entropy (bits) | Keyspace | Estimated time |
+|-----------------|---------------|----------|---------------|
+| 6-digit numeric PIN | ~20 | 1,000,000 | **< 1 second** |
+| 8-char alphanumeric | ~46 | ~2×10^14 | ~7 years |
+| 12-char mixed | ~71 | ~4×10^21 | infeasible |
+| 16-char random (default `generatePassphrase()`) | ~92 | ~5×10^27 | infeasible |
+| 4-word diceware passphrase | ~51 | ~2×10^15 | ~65 years |
+
+**Takeaway**: Short numeric PINs are trivially brute-forced offline. The `encrypt()` function enforces a minimum 8-character passphrase. The `generatePassphrase()` function produces 16-character random strings (~92 bits) by default.
 
 ### Random Number Generation
 
-**Source**: `crypto.getRandomValues()` (WebCrypto API)
-
-- Cryptographically secure PRNG
-- OS-backed entropy source
-- Used for: IVs, salts, PIN generation
+- Source: `crypto.getRandomValues()` (WebCrypto API)
+- OS-backed CSPRNG
+- Used for: IVs, salts, passphrase generation
 
 ### Base64 Encoding
 
-**URL-Safe Base64** (RFC 4648)
+URL-safe Base64 (RFC 4648 §5): `A-Za-z0-9-_`, no padding.
 
-- Character set: `A-Za-z0-9-_`
-- No padding (`=` removed)
-- Safe for URLs and JSON
+## Attack Surface
 
-## Attack Surface Analysis
+### 1. Offline Brute-Force
 
-### 1. Brute-Force PIN Attacks
-
-**Threat**: Attacker tries all possible PINs to decrypt a secret.
+**Threat**: Attacker downloads ciphertext and tries passphrases offline.
 
 **Mitigations**:
-- PBKDF2 makes each attempt expensive (~100ms)
-- No server-side PIN verification (attacker must download ciphertext)
-- Burn-after-reading limits attempts
-- Time-based expiration reduces attack window
+- 600,000 PBKDF2 iterations raise the cost per guess
+- 8-character minimum passphrase enforced client-side
+- Burn-after-reading limits ciphertext exposure
+- TTL reduces the window for obtaining ciphertext
 
-**Risk Level**: 🟡 Medium (depends on PIN strength)
-
-**Recommendations**:
-- Use long PINs (10+ characters)
-- Use passphrases instead of numeric PINs
-- Implement client-side rate limiting
+**Residual risk**: An attacker with a database dump and a weak user-chosen passphrase can brute-force it. PBKDF2 is GPU-friendly — it lacks the memory-hardness of Argon2/scrypt. Strong passphrases are the primary defense.
 
 ### 2. Database Compromise
 
-**Threat**: Attacker gains access to SQLite database.
+**Threat**: Attacker obtains the SQLite file.
 
-**Impact**: None (data is encrypted)
+**Attacker gets**: ciphertext, IVs, salts (public parameters), metadata (view counts, expiry).
 
-**What Attacker Gets**:
-- Encrypted ciphertext (unusable without PIN)
-- IVs and salts (public parameters)
-- Metadata (view counts, expiration times)
+**Attacker cannot get**: plaintext, passphrases, derived keys.
 
-**What Attacker Cannot Get**:
-- Plaintext secrets
-- Encryption PINs
-- Derived keys
+**Residual risk**: Low. Equivalent to the offline brute-force scenario above.
 
-**Risk Level**: 🟢 Low (zero-knowledge design)
+### 3. Man-in-the-Middle
 
-### 3. Man-in-the-Middle (MITM)
+**Threat**: Attacker intercepts client ↔ server traffic.
 
-**Threat**: Attacker intercepts traffic between client and server.
+**With HTTPS**: negligible risk (transport-layer encryption).
 
-**Without HTTPS**:
-- Attacker sees encrypted ciphertext (still secure)
-- Attacker could modify or block requests
-- Attacker could serve malicious JavaScript
+**Without HTTPS**: attacker sees encrypted blobs (still secure) but could serve malicious JavaScript to exfiltrate passphrases.
 
-**With HTTPS**:
-- Traffic encrypted at transport layer
-- Certificate pinning possible for enhanced security
-
-**Risk Level**: 🟡 Medium without HTTPS, 🟢 Low with HTTPS
-
-**Mitigation**: **Always use HTTPS in production** (see deployment guide)
+**Mitigation**: always deploy behind HTTPS. The server sets `Content-Security-Policy: default-src 'none'; script-src 'self'; connect-src 'self'`.
 
 ### 4. Malicious JavaScript Injection
 
-**Threat**: Attacker serves modified `crypto.js` to steal PINs or plaintext.
-
-**Attack Vectors**:
-- Compromised server
-- DNS hijacking
-- CDN compromise (if using external CDN)
+**Threat**: Compromised server serves modified `crypto.js` to steal passphrases.
 
 **Mitigations**:
-- Subresource Integrity (SRI) for external scripts
-- Content Security Policy (CSP)
-- Self-hosted JavaScript (no external dependencies)
+- `crypto.js` is embedded in the binary at compile time via `rust-embed` — modifying it requires rebuilding the binary
+- CSP restricts script sources to `'self'`
+- No external CDN dependencies
 
-**Risk Level**: 🔴 High (requires server compromise)
+**Residual risk**: If the binary itself is replaced on the server, all bets are off. Standard server hardening applies.
 
-**Current Implementation**: JavaScript is embedded in binary (cannot be modified without rebuilding)
+### 5. Timing / Side-Channel
 
-### 5. Timing Attacks
+AES-GCM and PBKDF2 operations run inside the browser's WebCrypto implementation, which is typically constant-time. The server never performs any passphrase-dependent operations, so server-side timing attacks are not applicable.
 
-**Threat**: Attacker infers information from operation timings.
-
-**Relevant Operations**:
-- PIN verification (constant-time comparison)
-- PBKDF2 key derivation (consistent timing)
-- AES decryption (hardware-accelerated, minimal variance)
-
-**Risk Level**: 🟢 Low (WebCrypto API handles this)
-
-### 6. Side-Channel Attacks
-
-**Threat**: Information leakage via power consumption, EM emissions, etc.
-
-**Scope**: Requires physical access to client device during decryption.
-
-**Risk Level**: 🟢 Low (out of scope for web applications)
-
-### 7. Phishing
-
-**Threat**: Attacker tricks user into revealing PIN on fake site.
-
-**Mitigations**:
-- User education
-- Domain verification
-- HTTPS with valid certificates
-
-**Risk Level**: 🟡 Medium (social engineering)
-
-## Security Best Practices
+## Best Practices
 
 ### For Users
 
-1. **Use Strong PINs**
-   - Minimum 6 characters (longer is better)
-   - Use passphrases: "correct-horse-battery-staple"
-   - Avoid common patterns (123456, password, etc.)
-
-2. **Share Securely**
-   - Send link via one channel (email, Slack)
-   - Send PIN via different channel (SMS, Signal)
-   - Never send both in the same message
-
-3. **Use Short TTLs**
-   - Default: 1 hour (sufficient for most cases)
-   - For highly sensitive data: 15 minutes
-   - Avoid 7-day expiration unless necessary
-
-4. **Enable Burn-After-Reading**
-   - Default: ON (recommended)
-   - Ensures secret is deleted after first view
-   - Prevents replay attacks
-
-5. **Verify Before Sharing**
-   - Test decryption before sharing link
-   - Ensure recipient has correct PIN
-   - Confirm secret displays correctly
+1. Use `generatePassphrase()` or a strong passphrase (12+ characters)
+2. Share the link and passphrase via **separate channels** (e.g., link over Slack, passphrase over Signal)
+3. Use burn-after-reading (`max_views: 1`) for sensitive data
+4. Set short TTLs — minutes or hours, not days
 
 ### For Operators
 
-1. **Always Use HTTPS**
-   ```bash
-   # Use a reverse proxy like Caddy or Nginx
-   # Never run IronShare directly exposed to internet
-   ```
-
-2. **Enable Security Headers**
-   ```nginx
-   add_header Strict-Transport-Security "max-age=31536000; includeSubDomains" always;
-   add_header X-Frame-Options "DENY" always;
-   add_header X-Content-Type-Options "nosniff" always;
-   add_header Referrer-Policy "no-referrer" always;
-   add_header Content-Security-Policy "default-src 'self'; script-src 'self' 'unsafe-inline' cdn.tailwindcss.com unpkg.com; style-src 'self' 'unsafe-inline'" always;
-   ```
-
-3. **Implement Rate Limiting**
-   ```nginx
-   # Nginx example
-   limit_req_zone $binary_remote_addr zone=api:10m rate=10r/m;
-   
-   location /api/ {
-       limit_req zone=api burst=5;
-   }
-   ```
-
-4. **Monitor Logs**
-   ```bash
-   # Watch for suspicious patterns
-   tail -f /var/log/ironshare.log | grep -i "error\|failed"
-   ```
-
-5. **Regular Updates**
-   ```bash
-   # Keep Rust and dependencies updated
-   rustup update
-   cargo update
-   cargo audit
-   ```
-
-6. **Database Security**
-   ```bash
-   # Restrict permissions
-   chmod 600 ironshare.db
-   
-   # Regular backups (encrypted data, but prevents data loss)
-   sqlite3 ironshare.db ".backup ironshare-backup.db"
-   ```
-
-7. **Firewall Configuration**
-   ```bash
-   # Only expose port 3000 to reverse proxy
-   ufw allow from 127.0.0.1 to any port 3000
-   ufw deny 3000
-   ```
+1. **HTTPS required** — deploy behind Nginx/Caddy with a valid certificate
+2. **Security headers** — the server sets CSP, X-Frame-Options, X-Content-Type-Options, Referrer-Policy automatically
+3. **Rate limiting** — built-in via `tower_governor` (10 req/s create, 5 req/s retrieve per IP)
+4. **Firewall** — block external access to port 3000; only the reverse proxy should reach it
+5. **Updates** — run `cargo audit` regularly, keep dependencies current
 
 ## Known Limitations
 
-### 1. No Server-Side PIN Validation
+1. **No server-side passphrase validation** — the server cannot enforce complexity because the passphrase never leaves the client. Client-side enforcement can be bypassed.
+2. **PBKDF2 is GPU-friendly** — unlike Argon2 or scrypt, PBKDF2 has no memory-hardness. A well-funded attacker with GPU clusters can attempt more guesses per second. This is a WebCrypto API constraint.
+3. **No client-side rate limiting on decryption** — once an attacker has the ciphertext, they can attempt offline decryption without any throttling. Burn-after-reading is the only mitigation.
+4. **No audit trail** — intentional (privacy-focused), but means unauthorized access attempts cannot be detected.
+5. **No user authentication** — anyone with the link can attempt retrieval. Security relies on ID obscurity (12-char NanoID ≈ 2^71) + passphrase.
 
-**Limitation**: Server cannot enforce PIN complexity requirements.
+## Compliance Notes
 
-**Reason**: PIN never sent to server (zero-knowledge design).
-
-**Mitigation**: Client-side validation (can be bypassed).
-
-### 2. No Rate Limiting on Decryption
-
-**Limitation**: Attacker can attempt unlimited decryptions client-side if they download the ciphertext.
-
-**Reason**: Decryption happens in browser, not on server.
-
-**Mitigation**: Burn-after-reading limits attempts. Consider adding client-side delays.
-
-### 3. No User Authentication
-
-**Limitation**: Anyone with the link can attempt decryption.
-
-**Design Choice**: Intentional (simpler, no account management).
-
-**Mitigation**: Link obscurity (12-char NanoID = 2^71 possible IDs) + PIN.
-
-### 4. No Audit Trail
-
-**Limitation**: No record of who accessed secrets or when.
-
-**Design Choice**: Intentional (privacy-focused).
-
-**Tradeoff**: Cannot detect unauthorized access attempts.
-
-### 5. Single-Server Architecture
-
-**Limitation**: No redundancy or high availability.
-
-**Scope**: Current version designed for simplicity.
-
-**Future**: Could be extended with distributed database.
-
-## Compliance Considerations
-
-### GDPR (General Data Protection Regulation)
-
-- ✅ Data minimization: Only encrypted data stored
-- ✅ Purpose limitation: Secrets auto-deleted
-- ✅ Storage limitation: Time-based expiration
-- ✅ Security: Strong encryption
-- ⚠️ Data portability: Not applicable (ephemeral data)
-- ⚠️ Right to erasure: Automatic (burn-after-reading)
-
-### HIPAA (Health Insurance Portability and Accountability Act)
-
-- ⚠️ **Not HIPAA compliant out-of-the-box**
-- Additional requirements:
-  - Audit logs (not implemented)
-  - User authentication (not implemented)
-  - Access controls (not implemented)
-  - Business Associate Agreement (BAA)
-
-**Recommendation**: Do not use for PHI without significant modifications.
-
-### PCI DSS (Payment Card Industry Data Security Standard)
-
-- ⚠️ **Not suitable for credit card data**
-- Reason: PCI requires specific key management practices
-- Alternative: Use Stripe, Plaid, or PCI-compliant services
-
-## Security Audit Checklist
-
-- [ ] HTTPS enabled with valid certificate
-- [ ] Security headers configured (CSP, HSTS, etc.)
-- [ ] Rate limiting implemented
-- [ ] Reverse proxy configured (not directly exposed)
-- [ ] Database file permissions restricted (600)
-- [ ] Server logs monitored
-- [ ] Dependencies up to date (`cargo audit`)
-- [ ] Regular database backups
-- [ ] Firewall rules configured
-- [ ] Incident response plan documented
+- **GDPR**: encrypted data, auto-deletion, no PII stored — generally compatible
+- **HIPAA / PCI DSS**: not compliant out-of-the-box (no audit logs, no user auth, no key management infrastructure)
 
 ## Reporting Security Issues
 
-If you discover a security vulnerability, please:
-
-1. **Do not** open a public GitHub issue
-2. Email security details to: [security@yourdomain.com]
-3. Include:
-   - Description of the vulnerability
-   - Steps to reproduce
-   - Potential impact
-   - Suggested fix (if any)
-
-We aim to respond within 120 hours.
+Do not open a public GitHub issue. Email details to the maintainers with:
+- Description of the vulnerability
+- Steps to reproduce
+- Potential impact
 
 ## References
 
-- [NIST SP 800-132](https://csrc.nist.gov/publications/detail/sp/800-132/final): PBKDF Recommendations
-- [NIST SP 800-38D](https://csrc.nist.gov/publications/detail/sp/800-38d/final): AES-GCM Specification
-- [RFC 4648](https://tools.ietf.org/html/rfc4648): Base64 Encoding
-- [WebCrypto API Specification](https://www.w3.org/TR/WebCryptoAPI/)
-- [OWASP Top 10](https://owasp.org/www-project-top-ten/)
+- [NIST SP 800-132](https://csrc.nist.gov/publications/detail/sp/800-132/final) — PBKDF Recommendations
+- [NIST SP 800-38D](https://csrc.nist.gov/publications/detail/sp/800-38d/final) — AES-GCM Specification
+- [RFC 4648](https://tools.ietf.org/html/rfc4648) — Base64 Encoding
+- [WebCrypto API](https://www.w3.org/TR/WebCryptoAPI/)

@@ -383,50 +383,60 @@ SELECT id, expires_at, views FROM secrets;
 .quit
 ```
 
-## Crypto Implementation Development
+## Crypto Implementation
 
 ### Modifying crypto.js
 
 Edit `static/crypto.js` to modify the reference encryption implementation.
 
 **Key functions to preserve**:
-- `IronCrypto.encrypt(plaintext, pin)` - Encrypts with PBKDF2 + AES-256-GCM
-- `IronCrypto.decrypt(ciphertext, iv, salt, pin)` - Decrypts and validates
-- `IronCrypto.deriveKeyFromPin(pin, salt)` - PBKDF2 key derivation
-- `IronCrypto.generatePin()` - Secure PIN generation
+- `IronCrypto.encrypt(plaintext, passphrase)` — PBKDF2 + AES-256-GCM, enforces 8-char minimum
+- `IronCrypto.decrypt(ciphertext, iv, salt, passphrase)` — decrypts and validates
+- `IronCrypto.deriveKey(passphrase, salt)` — PBKDF2-SHA256, 600k iterations
+- `IronCrypto.generatePassphrase(length)` — random alphanumeric, default 16 chars (~92 bits)
 
-**After editing**: Restart server to reload embedded assets.
+**After editing**: restart server to reload embedded assets (they're compiled into the binary via `rust-embed`).
 
 ### Testing Crypto Implementation
 
-Test the crypto functions in a Node.js environment or browser console:
+Test in a Node.js environment or browser console:
 
 ```javascript
-// Load crypto.js in your environment
 import IronCrypto from './crypto.js';
 
 // Test encryption
-const encrypted = await IronCrypto.encrypt("test secret", "123456");
+const encrypted = await IronCrypto.encrypt("test secret", "mypassphrase");
 console.log(encrypted);
 // { ciphertext: "...", iv: "...", salt: "..." }
 
-// Test decryption with correct PIN
+// Test decryption with correct passphrase
 const plaintext = await IronCrypto.decrypt(
   encrypted.ciphertext,
   encrypted.iv,
   encrypted.salt,
-  "123456"
+  "mypassphrase"
 );
 console.log(plaintext); // "test secret"
 
-// Test decryption with wrong PIN
+// Test decryption with wrong passphrase
 const wrong = await IronCrypto.decrypt(
   encrypted.ciphertext,
   encrypted.iv,
   encrypted.salt,
-  "wrong"
+  "wrongpass"
 );
 console.log(wrong); // null
+
+// Test passphrase generation
+const passphrase = IronCrypto.generatePassphrase();
+console.log(passphrase); // e.g. "Kx4mN7pR2sVwYz8b" (16 chars)
+
+// Test minimum enforcement
+try {
+  await IronCrypto.encrypt("test", "short");
+} catch (e) {
+  console.log(e.message); // "Passphrase must be at least 8 characters"
+}
 ```
 
 ## Adding New Features

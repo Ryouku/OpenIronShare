@@ -212,13 +212,9 @@ The reference implementation (`crypto.js`) provides `IronCrypto` with these func
 ### Encryption
 
 ```javascript
-const encrypted = await IronCrypto.encrypt(plaintext, pin);
-// Returns:
-// {
-//   ciphertext: "base64_string",
-//   iv: "base64_string",
-//   salt: "base64_string"
-// }
+const encrypted = await IronCrypto.encrypt(plaintext, passphrase);
+// Throws if passphrase < 8 characters
+// Returns: { ciphertext, iv, salt } (URL-safe Base64)
 ```
 
 ### Decryption
@@ -228,28 +224,31 @@ const plaintext = await IronCrypto.decrypt(
   ciphertext,
   iv,
   salt,
-  pin
+  passphrase
 );
-// Returns: plaintext string or null (wrong PIN)
+// Returns: plaintext string or null (wrong passphrase)
 ```
 
-### PIN Generation
+### Passphrase Generation
 
 ```javascript
-const pin = IronCrypto.generatePin();
-// Returns: 6-digit numeric PIN (e.g., "042857")
+const passphrase = IronCrypto.generatePassphrase();
+// Returns: 16-char random alphanumeric string (~92 bits entropy)
+
+const shorter = IronCrypto.generatePassphrase(12);
+// Returns: 12-char random string (~69 bits entropy)
 ```
 
 ---
 
 ## Rate Limiting
 
-**Not implemented in current version.**
+Built-in via `tower_governor`:
 
-Recommended for production:
-- Limit secret creation per IP: 10/minute
-- Limit secret retrieval per IP: 30/minute
-- Implement exponential backoff for failed PIN attempts
+- **Secret creation** (`POST /api/secret`): 10 requests/second per IP (burst: 20)
+- **Secret retrieval** (`POST /api/secret/:id`, `GET /api/secret/:id/check`): 5 requests/second per IP (burst: 10)
+
+HTTP `429 Too Many Requests` is returned when limits are exceeded.
 
 ---
 
@@ -298,14 +297,13 @@ All API errors follow this format:
 ### 1. Encrypt and Store a Secret (JavaScript/Node.js)
 
 ```javascript
-// Import crypto.js into your project
 import IronCrypto from './crypto.js';
 
 const secret = "my-api-key-12345";
-const pin = "123456";
+const passphrase = IronCrypto.generatePassphrase(); // 16-char, ~92 bits
 
 // Encrypt
-const encrypted = await IronCrypto.encrypt(secret, pin);
+const encrypted = await IronCrypto.encrypt(secret, passphrase);
 
 // Store
 const response = await fetch('http://localhost:3000/api/secret', {
@@ -322,18 +320,16 @@ const response = await fetch('http://localhost:3000/api/secret', {
 
 const result = await response.json();
 console.log(`Secret ID: ${result.id}`);
-console.log(`Expires at: ${new Date(result.expires_at * 1000)}`);
-
-// Share the ID and PIN via separate channels
+console.log(`Passphrase: ${passphrase}`);
+// Share the ID and passphrase via separate channels
 ```
 
 ### 2. Retrieve and Decrypt a Secret (JavaScript/Node.js)
 
 ```javascript
 const secretId = "abc123xyz789";
-const pin = "123456";
+const passphrase = "..."; // received out-of-band
 
-// Fetch encrypted data
 const response = await fetch(`http://localhost:3000/api/secret/${secretId}`, {
   method: 'POST'
 });
@@ -342,20 +338,18 @@ if (response.status === 410) {
   console.error("Secret has been burned or expired");
 } else {
   const data = await response.json();
-  
-  // Decrypt
+
   const plaintext = await IronCrypto.decrypt(
     data.ciphertext,
     data.iv,
     data.salt,
-    pin
+    passphrase
   );
-  
+
   if (plaintext) {
     console.log("Decrypted:", plaintext);
-    console.log(`Remaining views: ${data.remaining_views}`);
   } else {
-    console.error("Wrong PIN or corrupted data");
+    console.error("Wrong passphrase or corrupted data");
   }
 }
 ```
@@ -377,20 +371,14 @@ if (response.status === 410) {
 - Encryption PIN/passphrase
 - Derived AES keys
 
-### URL Structure
-
-Secret IDs are 12-character NanoIDs. Clients should store and transmit them securely.
-
-The ID alone is insufficient to decrypt. The PIN must be shared separately (e.g., via different communication channel).
-
 ### Best Practices
 
 1. **Always use HTTPS** in production
-2. **Share ID and PIN separately** (different channels)
+2. **Share ID and passphrase separately** (different channels)
 3. **Use burn-after-reading** for sensitive data (`max_views: 1`)
 4. **Set short TTLs** (minutes/hours, not days)
-5. **Never log PINs** on client or server
-6. **Implement rate limiting** in production
+5. **Never log passphrases** on client or server
+6. **Use `generatePassphrase()`** instead of short or predictable passwords
 7. **Enable CORS** only for trusted origins
 
 ---

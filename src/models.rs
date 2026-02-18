@@ -7,7 +7,7 @@ pub struct StoreRequest {
     pub ciphertext: String,
     /// Base64 encoded IV (12 bytes)
     pub iv: String,
-    /// Base64 encoded Salt (16 bytes for PBKDF2)
+    /// Base64-encoded PBKDF2 salt (16 bytes)
     pub salt: String,
     /// Maximum number of views allowed
     #[serde(default = "default_max_views")]
@@ -90,7 +90,7 @@ pub struct StoreResponse {
 /// JSON response returned by `POST /api/secret/:id`.
 ///
 /// Contains the encrypted blob that the client decrypts locally using the
-/// PIN (never sent to the server).
+/// passphrase (never sent to the server).
 #[derive(Debug, Serialize)]
 pub struct ViewResponse {
     /// Base64-encoded AES-GCM ciphertext.

@@ -54,7 +54,7 @@ pub fn router(pool: Arc<Pool<sqlx::Sqlite>>) -> Router {
             .unwrap()
     );
 
-    // Stricter rate limit for retrieval to slow brute-force PIN attempts
+    // Stricter rate limit for retrieval to slow brute-force passphrase attempts
     let retrieval_rate_limit = Arc::new(
         GovernorConfigBuilder::default()
             .per_second(5)
@@ -291,8 +291,8 @@ async fn check_secret_handler(
 /// `POST /api/secret/:id` — retrieves the encrypted payload and increments the view counter.
 ///
 /// The client is responsible for decrypting the returned ciphertext using the
-/// PIN and the returned `iv`/`salt`. If the PIN is wrong, AES-GCM decryption
-/// fails client-side — the server has no way to validate it.
+/// passphrase and the returned `iv`/`salt`. Passphrase verification happens
+/// client-side — the server has no way to validate it.
 ///
 /// If this was the last allowed view the secret is deleted atomically inside
 /// the database transaction before this response is sent.

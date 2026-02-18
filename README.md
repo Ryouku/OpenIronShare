@@ -1,6 +1,6 @@
 # IronShare
 
-Zero-knowledge secret sharing API built with Rust and Axum. Clients encrypt secrets locally; the server stores only the encrypted blob and never has access to plaintext, PINs, or keys.
+Zero-knowledge secret sharing API built with Rust and Axum. Clients encrypt secrets locally; the server stores only the encrypted blob and never has access to plaintext, passphrases, or keys.
 
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 [![Rust](https://img.shields.io/badge/rust-1.93%2B-orange.svg)](https://www.rust-lang.org/)
@@ -48,23 +48,26 @@ API available at `http://localhost:3000`.
 ## How It Works
 
 ```
-Client: encrypt(plaintext, pin) → {ciphertext, iv, salt}
+Client: encrypt(plaintext, passphrase) → {ciphertext, iv, salt}
 Client: POST /api/secret {ciphertext, iv, salt, ttl_minutes, max_views}
 Server: stores encrypted blob → returns {id, expires_at}
 
 Client: POST /api/secret/:id → receives {ciphertext, iv, salt}
-Client: decrypt(ciphertext, iv, salt, pin) → plaintext
+Client: decrypt(ciphertext, iv, salt, passphrase) → plaintext
 ```
 
-The server cannot decrypt secrets. Wrong PIN fails silently client-side via AES-GCM authentication.
+The server cannot decrypt secrets. A wrong passphrase fails silently client-side via AES-GCM authentication.
 
 ## Client Implementation
 
-[`static/crypto.js`](static/crypto.js) is a complete WebCrypto API reference implementation (PBKDF2-SHA256 + AES-256-GCM). Use it directly or port to any language.
+[`static/crypto.js`](static/crypto.js) is a complete WebCrypto API reference implementation using PBKDF2-SHA256 (600,000 iterations) and AES-256-GCM. Use it directly or port to any language.
 
 ```javascript
+// Generate a strong passphrase (~92 bits entropy)
+const passphrase = IronCrypto.generatePassphrase();
+
 // Encrypt
-const { ciphertext, iv, salt } = await IronCrypto.encrypt("my secret", "pin");
+const { ciphertext, iv, salt } = await IronCrypto.encrypt("my secret", passphrase);
 
 // Store
 const { id } = await fetch("/api/secret", {
@@ -75,7 +78,7 @@ const { id } = await fetch("/api/secret", {
 
 // Retrieve and decrypt
 const data = await fetch(`/api/secret/${id}`, { method: "POST" }).then(r => r.json());
-const plaintext = await IronCrypto.decrypt(data.ciphertext, data.iv, data.salt, "pin");
+const plaintext = await IronCrypto.decrypt(data.ciphertext, data.iv, data.salt, passphrase);
 ```
 
 ## Project Structure

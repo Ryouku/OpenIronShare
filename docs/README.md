@@ -1,19 +1,15 @@
-# IronShare API Documentation
+# IronShare Documentation
 
-IronShare is a zero-knowledge secret sharing API service built with Rust and Axum.
+Zero-knowledge secret sharing API. The server stores only encrypted blobs — all encryption and decryption happens client-side using PBKDF2-SHA256 (600,000 iterations) and AES-256-GCM.
 
-## Core Principle
+## Contents
 
-The server stores only encrypted blobs. All encryption/decryption operations are performed client-side. The server never has access to plaintext content, PINs, or encryption keys.
-
-## Documentation
-
-- **[API Reference](./api-reference.md)** - HTTP endpoints, request/response formats
-- **[Architecture](./architecture.md)** - System design, data flow, encryption process
-- **[Security](./security.md)** - Threat model, cryptography details, best practices
-- **[Development](./development.md)** - Building, testing, contributing
-- **[Deployment](./deployment.md)** - Production setup (systemd, nginx, Docker)
-- **[MCP Integration](./mcp-integration.md)** - AI assistant integration guide
+- **[API Reference](./api-reference.md)** — HTTP endpoints, request/response formats
+- **[Architecture](./architecture.md)** — System design, data flow, component overview
+- **[Security](./security.md)** — Threat model, cryptographic design, entropy analysis, known limitations
+- **[Development](./development.md)** — Building, testing, contributing
+- **[Deployment](./deployment.md)** — Docker, systemd, reverse proxy setup
+- **[MCP Integration](./mcp-integration.md)** — AI assistant integration (Claude, Cursor, Cline)
 
 ## Quick Start
 
@@ -26,19 +22,15 @@ cargo build --release
 ./target/release/ironshare
 ```
 
-API available at `http://localhost:3000`
+API available at `http://localhost:3000`.
 
 ## Reference Implementation
 
-[`/crypto.js`](../static/crypto.js) provides a complete client-side encryption/decryption implementation using WebCrypto API (PBKDF2 + AES-256-GCM).
+[`/crypto.js`](../static/crypto.js) — complete client-side crypto using WebCrypto API. Passphrase minimum: 8 characters. Default `generatePassphrase()`: 16 characters (~92 bits entropy).
 
 ## Key Technologies
 
 - **Backend**: Rust 1.93+, Axum, SQLx, Tokio
-- **Crypto**: WebCrypto API (AES-256-GCM, PBKDF2-SHA256)
+- **Crypto**: WebCrypto API (AES-256-GCM, PBKDF2-SHA256, 600k iterations)
 - **Database**: SQLite
-- **Deployment**: Single binary (~10MB)
-
-## License
-
-MIT License - See [LICENSE](../LICENSE)
+- **Deployment**: Single binary + SQLite file
