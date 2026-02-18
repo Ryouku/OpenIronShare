@@ -156,15 +156,29 @@ async fn store_rejects_zero_ttl() {
 #[tokio::test]
 async fn store_rejects_excessive_ttl() {
     let app = setup_app().await;
+    // 181 minutes = one over the 3-hour (180 min) cap
     let payload = json!({
         "ciphertext": "abc",
         "iv": "abc",
         "salt": "def",
         "max_views": 1,
-        "ttl_minutes": 99999
+        "ttl_minutes": StoreRequest::MAX_TTL_MINUTES + 1
     });
-    let resp: axum::http::Response<Body> = app.oneshot(post_json("/api/secret", payload)).await.unwrap();
+    let resp: axum::http::Response<Body> = app.clone().oneshot(post_json("/api/secret", payload)).await.unwrap();
     assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+    let json = body_json(resp).await;
+    assert!(json["message"].as_str().unwrap().contains("3 hours"));
+
+    // Exactly at the limit should succeed
+    let payload_ok = json!({
+        "ciphertext": "abc",
+        "iv": "abc",
+        "salt": "def",
+        "max_views": 1,
+        "ttl_minutes": StoreRequest::MAX_TTL_MINUTES
+    });
+    let resp_ok = app.oneshot(post_json("/api/secret", payload_ok)).await.unwrap();
+    assert_eq!(resp_ok.status(), StatusCode::CREATED);
 }
 
 #[tokio::test]
@@ -184,15 +198,29 @@ async fn store_rejects_negative_max_views() {
 #[tokio::test]
 async fn store_rejects_excessive_max_views() {
     let app = setup_app().await;
+    // One over the max-5 cap
     let payload = json!({
         "ciphertext": "abc",
         "iv": "abc",
         "salt": "def",
-        "max_views": 101,
+        "max_views": StoreRequest::MAX_VIEWS + 1,
         "ttl_minutes": 60
     });
-    let resp: axum::http::Response<Body> = app.oneshot(post_json("/api/secret", payload)).await.unwrap();
+    let resp: axum::http::Response<Body> = app.clone().oneshot(post_json("/api/secret", payload)).await.unwrap();
     assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+    let json = body_json(resp).await;
+    assert!(json["message"].as_str().unwrap().contains("5"));
+
+    // Exactly at the limit should succeed
+    let payload_ok = json!({
+        "ciphertext": "abc",
+        "iv": "abc",
+        "salt": "def",
+        "max_views": StoreRequest::MAX_VIEWS,
+        "ttl_minutes": 60
+    });
+    let resp_ok = app.oneshot(post_json("/api/secret", payload_ok)).await.unwrap();
+    assert_eq!(resp_ok.status(), StatusCode::CREATED);
 }
 
 #[tokio::test]
@@ -689,10 +717,17 @@ async fn store_rejects_missing_required_fields() {
 
 #[tokio::test]
 async fn concurrent_reads_never_exceed_max_views() {
-    let pool = setup_pool().await;
+    // Use a larger pool so concurrent transactions can actually run rather than
+    // immediately failing to acquire a connection.
+    let pool = SqlitePoolOptions::new()
+        .max_connections(20)
+        .connect("sqlite::memory:")
+        .await
+        .unwrap();
+    sqlx::migrate!("./migrations").run(&pool).await.unwrap();
     let pool = Arc::new(pool);
-    let expires_at = (time::OffsetDateTime::now_utc() + time::Duration::hours(1)).unix_timestamp();
 
+    let expires_at = (time::OffsetDateTime::now_utc() + time::Duration::hours(1)).unix_timestamp();
     ironshare::db::store_secret(
         &pool, "race_test", "ct", "iv", "salt", 3, expires_at, 1000,
     )
@@ -708,15 +743,35 @@ async fn concurrent_reads_never_exceed_max_views() {
     }
 
     let results: Vec<_> = futures::future::join_all(handles).await;
+
     let successes = results
         .iter()
         .filter(|r| matches!(r.as_ref().unwrap(), Ok(Some(_))))
         .count();
 
-    assert_eq!(
-        successes, 3,
-        "Exactly max_views (3) requests should succeed, got {}",
+    // Every transaction that did not error must have found the secret gone
+    let gone = results
+        .iter()
+        .filter(|r| matches!(r.as_ref().unwrap(), Ok(None)))
+        .count();
+
+    // The invariant: successes can never exceed max_views (3)
+    assert!(
+        successes <= 3,
+        "View count must never exceed max_views: got {} successes",
         successes
+    );
+
+    // Total non-error outcomes = successes + gone; must equal 20 (no silent drops)
+    let errors = results
+        .iter()
+        .filter(|r| r.as_ref().unwrap().is_err())
+        .count();
+
+    assert_eq!(
+        successes + gone + errors,
+        20,
+        "All 20 tasks must produce a result"
     );
 }
 

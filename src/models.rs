@@ -24,10 +24,10 @@ impl StoreRequest {
     pub const MAX_IV_SIZE: usize = 200;
     /// Maximum base64-encoded salt length.
     pub const MAX_SALT_SIZE: usize = 200;
-    /// Maximum TTL in minutes (7 days).
-    pub const MAX_TTL_MINUTES: i64 = 10080;
+    /// Maximum TTL in minutes (3 hours).
+    pub const MAX_TTL_MINUTES: i64 = 180;
     /// Maximum allowed views per secret.
-    pub const MAX_VIEWS: i64 = 100;
+    pub const MAX_VIEWS: i64 = 5;
     /// Circuit-breaker limit on total active secrets (~5 GB at maximum ciphertext size).
     pub const MAX_TOTAL_SECRETS: i64 = 100_000;
 
@@ -58,7 +58,7 @@ impl StoreRequest {
             return Err("TTL must be at least 1 minute");
         }
         if self.ttl_minutes > Self::MAX_TTL_MINUTES {
-            return Err("TTL cannot exceed 7 days");
+            return Err("TTL cannot exceed 3 hours");
         }
 
         // Validate max_views
@@ -66,7 +66,7 @@ impl StoreRequest {
             return Err("Max views cannot be negative");
         }
         if self.max_views > Self::MAX_VIEWS {
-            return Err("Max views cannot exceed 100");
+            return Err("Max views cannot exceed 5");
         }
 
         Ok(())
