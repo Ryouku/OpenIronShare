@@ -26,7 +26,7 @@ tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 
 # Database
-sqlx = { version = "0.7", features = ["runtime-tokio-rustls", "sqlite", "time", "migrate"] }
+sqlx = { version = "0.8", features = ["runtime-tokio-rustls", "sqlite", "time", "migrate"] }
 
 # NPWD (URL-safe IDs)
 nanoid = "0.4"
