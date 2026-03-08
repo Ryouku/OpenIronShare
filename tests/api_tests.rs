@@ -1,7 +1,7 @@
 use axum::body::Body;
 use axum::http::{Request, StatusCode};
 use http_body_util::BodyExt;
-use ironshare::models::StoreRequest;
+use ironshare::models::{StoreRequest};
 use serde_json::{json, Value};
 use sqlx::sqlite::SqlitePoolOptions;
 use std::sync::Arc;
@@ -467,11 +467,19 @@ async fn circuit_breaker_rejects_at_capacity() {
         .unwrap();
     sqlx::migrate!("./migrations").run(&pool).await.unwrap();
 
+    let req = StoreRequest {
+        ciphertext: "ct".to_string(),
+        iv: "iv".to_string(),
+        salt: "salt".to_string(),
+        max_views: 1,
+        ttl_minutes: 60,
+    };
+
     for i in 0..5 {
         let id = format!("test_id_{:04}", i);
         let expires_at = (time::OffsetDateTime::now_utc() + time::Duration::hours(1)).unix_timestamp();
         let stored = ironshare::db::store_secret(
-            &pool, &id, "ct", "iv", "salt", 1, expires_at, 5,
+            &pool, &id, &req, expires_at, 5,
         )
         .await
         .unwrap();
@@ -481,7 +489,7 @@ async fn circuit_breaker_rejects_at_capacity() {
     // 6th should be rejected
     let expires_at = (time::OffsetDateTime::now_utc() + time::Duration::hours(1)).unix_timestamp();
     let stored = ironshare::db::store_secret(
-        &pool, "overflow", "ct", "iv", "salt", 1, expires_at, 5,
+        &pool, "overflow", &req, expires_at, 5,
     )
     .await
     .unwrap();
@@ -513,9 +521,16 @@ async fn circuit_breaker_ignores_expired_secrets() {
     }
 
     // Should still be able to store (expired ones don't count)
+    let req = StoreRequest {
+        ciphertext: "ct".to_string(),
+        iv: "iv".to_string(),
+        salt: "salt".to_string(),
+        max_views: 1,
+        ttl_minutes: 60,
+    };
     let expires_at = (time::OffsetDateTime::now_utc() + time::Duration::hours(1)).unix_timestamp();
     let stored = ironshare::db::store_secret(
-        &pool, "new_one", "ct", "iv", "salt", 1, expires_at, 5,
+        &pool, "new_one", &req, expires_at, 5,
     )
     .await
     .unwrap();
@@ -633,6 +648,10 @@ async fn responses_include_security_headers() {
     let csp = headers.get("content-security-policy").unwrap().to_str().unwrap();
     assert!(csp.contains("default-src 'none'"));
     assert!(csp.contains("script-src 'self'"));
+    assert_eq!(
+        headers.get("cache-control").unwrap(),
+        "no-store"
+    );
 }
 
 // ─── Static Asset: /crypto.js ───
@@ -727,9 +746,16 @@ async fn concurrent_reads_never_exceed_max_views() {
     sqlx::migrate!("./migrations").run(&pool).await.unwrap();
     let pool = Arc::new(pool);
 
+    let req = StoreRequest {
+        ciphertext: "ct".to_string(),
+        iv: "iv".to_string(),
+        salt: "salt".to_string(),
+        max_views: 3,
+        ttl_minutes: 60,
+    };
     let expires_at = (time::OffsetDateTime::now_utc() + time::Duration::hours(1)).unix_timestamp();
     ironshare::db::store_secret(
-        &pool, "race_test", "ct", "iv", "salt", 3, expires_at, 1000,
+        &pool, "race_test", &req, expires_at, 1000,
     )
     .await
     .unwrap();

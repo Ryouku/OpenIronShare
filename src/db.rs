@@ -3,7 +3,7 @@
 //! All functions operate on a shared SQLite connection pool.
 //! Mutations use explicit transactions to ensure atomicity.
 
-use crate::models::{SecretRow, SecretCheckData};
+use crate::models::{SecretRow, SecretCheckData, StoreRequest};
 use sqlx::{Pool, Sqlite};
 use tracing::info;
 
@@ -50,10 +50,7 @@ pub async fn check_secret_exists(
 pub async fn store_secret(
     pool: &Pool<Sqlite>,
     id: &str,
-    ciphertext: &str,
-    iv: &str,
-    salt: &str,
-    max_views: i64,
+    req: &StoreRequest,
     expires_at: i64,
     max_total: i64,
 ) -> Result<bool, sqlx::Error> {
@@ -71,14 +68,21 @@ pub async fn store_secret(
         return Ok(false); // At capacity
     }
 
+    let ciphertext = &req.ciphertext;
+    let iv = &req.iv;
+    let salt = &req.salt;
+    let max_views = req.max_views;
+    let created_at = now;
+
     sqlx::query!(
-        "INSERT INTO secrets (id, ciphertext, iv, salt, max_views, views, expires_at, created_at) VALUES (?1, ?2, ?3, ?4, ?5, 0, ?6, strftime('%s', 'now'))",
+        "INSERT INTO secrets (id, ciphertext, iv, salt, max_views, views, expires_at, created_at) VALUES (?1, ?2, ?3, ?4, ?5, 0, ?6, ?7)",
         id,
         ciphertext,
         iv,
         salt,
         max_views,
-        expires_at
+        expires_at,
+        created_at
     )
     .execute(&mut *tx)
     .await?;

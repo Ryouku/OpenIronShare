@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "INSERT INTO secrets (id, ciphertext, iv, salt, max_views, views, expires_at, created_at) VALUES (?1, ?2, ?3, ?4, ?5, 0, ?6, ?7)",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 7
+    },
+    "nullable": []
+  },
+  "hash": "7f4316b0be4d7135bcbfd5b77ceb97f40eae88ce58119d03b1861d23007432cf"
+}

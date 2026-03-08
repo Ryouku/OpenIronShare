@@ -108,6 +108,10 @@ pub fn router(pool: Arc<Pool<sqlx::Sqlite>>) -> Router {
                         "default-src 'none'; script-src 'self'; connect-src 'self'"
                     ),
                 ))
+                .layer(tower_http::set_header::SetResponseHeaderLayer::if_not_present(
+                    header::CACHE_CONTROL,
+                    HeaderValue::from_static("no-store"),
+                ))
         )
 }
 
@@ -156,12 +160,32 @@ fn serve_static(file_name: &str, content_type: &str) -> Response<Body> {
 
 // --- API handlers ---
 
-/// `GET /health` — liveness probe.
-async fn health_check() -> impl IntoResponse {
-    Json(StatusResponse {
-        status: "ok",
-        message: "IronShare is secure".to_string(),
-    })
+/// `GET /health` — liveness probe with database connectivity check.
+async fn health_check(
+    State(pool): State<Arc<Pool<sqlx::Sqlite>>>,
+) -> impl IntoResponse {
+    match sqlx::query_scalar::<_, i32>("SELECT 1")
+        .fetch_one(pool.as_ref())
+        .await
+    {
+        Ok(_) => (
+            StatusCode::OK,
+            Json(StatusResponse {
+                status: "ok",
+                message: "IronShare is secure".to_string(),
+            }),
+        ).into_response(),
+        Err(e) => {
+            error!("Health check failed: {}", e);
+            (
+                StatusCode::SERVICE_UNAVAILABLE,
+                Json(StatusResponse {
+                    status: "error",
+                    message: "Database unavailable".to_string(),
+                }),
+            ).into_response()
+        }
+    }
 }
 
 /// `POST /api/secret` — stores an encrypted secret.
@@ -196,7 +220,7 @@ async fn store_secret_handler(
         time::Duration::minutes(req.ttl_minutes))
         .unix_timestamp();
 
-    match db::store_secret(&pool, &id, &req.ciphertext, &req.iv, &req.salt, req.max_views, expires_at, StoreRequest::MAX_TOTAL_SECRETS).await {
+    match db::store_secret(&pool, &id, &req, expires_at, StoreRequest::MAX_TOTAL_SECRETS).await {
         Ok(true) => {
             info!("Secret stored with ID: {}", id);
             (

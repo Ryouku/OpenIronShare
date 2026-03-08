@@ -8,8 +8,6 @@ use std::net::SocketAddr;
 use sqlx::sqlite::SqlitePoolOptions;
 use std::sync::Arc;
 use std::time::Duration;
-use tracing_subscriber;
-
 mod config;
 mod db;
 mod handlers;
@@ -24,6 +22,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let pool = SqlitePoolOptions::new()
         .max_connections(5)
         .connect(&config.database_url)
+        .await?;
+
+    // Enable WAL mode for better concurrent read/write performance
+    sqlx::query("PRAGMA journal_mode=WAL")
+        .execute(&pool)
         .await?;
 
     // Run migrations
