@@ -74,9 +74,13 @@ impl StoreRequest {
 }
 
 /// Serde default: burn after one view.
-fn default_max_views() -> i64 { 1 }
+fn default_max_views() -> i64 {
+    1
+}
 /// Serde default: expire after 60 minutes.
-fn default_ttl() -> i64 { 60 }
+fn default_ttl() -> i64 {
+    60
+}
 
 /// JSON response returned to the client after a successful `POST /api/secret`.
 #[derive(Debug, Serialize)]

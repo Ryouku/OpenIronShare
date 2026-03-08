@@ -18,7 +18,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     tracing_subscriber::fmt::init();
 
     let config = config::Config::from_env();
-    
+
     let pool = SqlitePoolOptions::new()
         .max_connections(5)
         .connect(&config.database_url)
@@ -58,13 +58,16 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let bind_addr = format!("{}:{}", config.host, config.port);
     let listener = tokio::net::TcpListener::bind(&bind_addr).await?;
     tracing::info!("IronShare listening on http://{}", bind_addr);
-    
+
     // Graceful shutdown
     // into_make_service_with_connect_info provides peer SocketAddr
     // Required by tower_governor for per-IP rate limiting
-    axum::serve(listener, app.into_make_service_with_connect_info::<SocketAddr>())
-        .with_graceful_shutdown(shutdown_signal())
-        .await?;
+    axum::serve(
+        listener,
+        app.into_make_service_with_connect_info::<SocketAddr>(),
+    )
+    .with_graceful_shutdown(shutdown_signal())
+    .await?;
 
     Ok(())
 }

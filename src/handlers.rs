@@ -11,21 +11,18 @@
 use std::sync::Arc;
 
 use axum::{
+    Json, Router,
     body::Body,
     extract::{DefaultBodyLimit, Path, State},
-    http::{StatusCode, HeaderValue, header},
+    http::{HeaderValue, StatusCode, header},
     response::{IntoResponse, Response},
     routing::{get, post},
-    Json, Router,
 };
 use nanoid::nanoid;
 use sqlx::Pool;
 use time::OffsetDateTime;
 use tower::ServiceBuilder;
-use tower_governor::{
-    governor::GovernorConfigBuilder, 
-    GovernorLayer,
-};
+use tower_governor::{GovernorLayer, governor::GovernorConfigBuilder};
 use tracing::{error, info};
 
 use crate::{db, models::*};
@@ -51,7 +48,7 @@ pub fn router(pool: Arc<Pool<sqlx::Sqlite>>) -> Router {
             .per_second(10)
             .burst_size(20)
             .finish()
-            .unwrap()
+            .unwrap(),
     );
 
     // Stricter rate limit for retrieval to slow brute-force passphrase attempts
@@ -60,7 +57,7 @@ pub fn router(pool: Arc<Pool<sqlx::Sqlite>>) -> Router {
             .per_second(5)
             .burst_size(10)
             .finish()
-            .unwrap()
+            .unwrap(),
     );
 
     let static_routes = Router::new()
@@ -90,28 +87,38 @@ pub fn router(pool: Arc<Pool<sqlx::Sqlite>>) -> Router {
             ServiceBuilder::new()
                 .layer(DefaultBodyLimit::max(128 * 1024))
                 .layer(tower_http::trace::TraceLayer::new_for_http())
-                .layer(tower_http::set_header::SetResponseHeaderLayer::if_not_present(
-                    header::X_FRAME_OPTIONS,
-                    HeaderValue::from_static("DENY"),
-                ))
-                .layer(tower_http::set_header::SetResponseHeaderLayer::if_not_present(
-                    header::X_CONTENT_TYPE_OPTIONS,
-                    HeaderValue::from_static("nosniff"),
-                ))
-                .layer(tower_http::set_header::SetResponseHeaderLayer::if_not_present(
-                    header::REFERRER_POLICY,
-                    HeaderValue::from_static("no-referrer"),
-                ))
-                .layer(tower_http::set_header::SetResponseHeaderLayer::if_not_present(
-                    header::CONTENT_SECURITY_POLICY,
-                    HeaderValue::from_static(
-                        "default-src 'none'; script-src 'self'; connect-src 'self'"
+                .layer(
+                    tower_http::set_header::SetResponseHeaderLayer::if_not_present(
+                        header::X_FRAME_OPTIONS,
+                        HeaderValue::from_static("DENY"),
                     ),
-                ))
-                .layer(tower_http::set_header::SetResponseHeaderLayer::if_not_present(
-                    header::CACHE_CONTROL,
-                    HeaderValue::from_static("no-store"),
-                ))
+                )
+                .layer(
+                    tower_http::set_header::SetResponseHeaderLayer::if_not_present(
+                        header::X_CONTENT_TYPE_OPTIONS,
+                        HeaderValue::from_static("nosniff"),
+                    ),
+                )
+                .layer(
+                    tower_http::set_header::SetResponseHeaderLayer::if_not_present(
+                        header::REFERRER_POLICY,
+                        HeaderValue::from_static("no-referrer"),
+                    ),
+                )
+                .layer(
+                    tower_http::set_header::SetResponseHeaderLayer::if_not_present(
+                        header::CONTENT_SECURITY_POLICY,
+                        HeaderValue::from_static(
+                            "default-src 'none'; script-src 'self'; connect-src 'self'",
+                        ),
+                    ),
+                )
+                .layer(
+                    tower_http::set_header::SetResponseHeaderLayer::if_not_present(
+                        header::CACHE_CONTROL,
+                        HeaderValue::from_static("no-store"),
+                    ),
+                ),
         )
 }
 
@@ -161,9 +168,7 @@ fn serve_static(file_name: &str, content_type: &str) -> Response<Body> {
 // --- API handlers ---
 
 /// `GET /health` — liveness probe with database connectivity check.
-async fn health_check(
-    State(pool): State<Arc<Pool<sqlx::Sqlite>>>,
-) -> impl IntoResponse {
+async fn health_check(State(pool): State<Arc<Pool<sqlx::Sqlite>>>) -> impl IntoResponse {
     match sqlx::query_scalar::<_, i32>("SELECT 1")
         .fetch_one(pool.as_ref())
         .await
@@ -174,7 +179,8 @@ async fn health_check(
                 status: "ok",
                 message: "IronShare is secure".to_string(),
             }),
-        ).into_response(),
+        )
+            .into_response(),
         Err(e) => {
             error!("Health check failed: {}", e);
             (
@@ -183,7 +189,8 @@ async fn health_check(
                     status: "error",
                     message: "Database unavailable".to_string(),
                 }),
-            ).into_response()
+            )
+                .into_response()
         }
     }
 }
@@ -210,33 +217,37 @@ async fn store_secret_handler(
                 status: "error",
                 message: e.to_string(),
             }),
-        ).into_response();
+        )
+            .into_response();
     }
 
     // 12-char NanoID: URL-safe, short enough to share, hard enough to guess
     let id = nanoid!(12);
-    
-    let expires_at = (OffsetDateTime::now_utc() + 
-        time::Duration::minutes(req.ttl_minutes))
-        .unix_timestamp();
 
-    match db::store_secret(&pool, &id, &req, expires_at, StoreRequest::MAX_TOTAL_SECRETS).await {
+    let expires_at =
+        (OffsetDateTime::now_utc() + time::Duration::minutes(req.ttl_minutes)).unix_timestamp();
+
+    match db::store_secret(
+        &pool,
+        &id,
+        &req,
+        expires_at,
+        StoreRequest::MAX_TOTAL_SECRETS,
+    )
+    .await
+    {
         Ok(true) => {
             info!("Secret stored with ID: {}", id);
-            (
-                StatusCode::CREATED,
-                Json(StoreResponse { id, expires_at }),
-            ).into_response()
+            (StatusCode::CREATED, Json(StoreResponse { id, expires_at })).into_response()
         }
-        Ok(false) => {
-            (
-                StatusCode::SERVICE_UNAVAILABLE,
-                Json(StatusResponse {
-                    status: "error",
-                    message: "Service at capacity. Try again later.".to_string(),
-                }),
-            ).into_response()
-        }
+        Ok(false) => (
+            StatusCode::SERVICE_UNAVAILABLE,
+            Json(StatusResponse {
+                status: "error",
+                message: "Service at capacity. Try again later.".to_string(),
+            }),
+        )
+            .into_response(),
         Err(e) => {
             error!("Failed to store secret: {:?}", e);
             (
@@ -245,7 +256,8 @@ async fn store_secret_handler(
                     status: "error",
                     message: "Internal server error".to_string(),
                 }),
-            ).into_response()
+            )
+                .into_response()
         }
     }
 }
@@ -272,7 +284,8 @@ async fn check_secret_handler(
                 status: "error",
                 message: "Invalid secret ID".to_string(),
             }),
-        ).into_response();
+        )
+            .into_response();
     }
 
     match db::check_secret_exists(&pool, &id).await {
@@ -288,17 +301,17 @@ async fn check_secret_handler(
                         -1 // unlimited
                     }
                 })),
-            ).into_response()
+            )
+                .into_response()
         }
-        Ok(None) => {
-            (
-                StatusCode::GONE,
-                Json(StatusResponse {
-                    status: "gone",
-                    message: "Secret has expired or been burned".to_string(),
-                }),
-            ).into_response()
-        }
+        Ok(None) => (
+            StatusCode::GONE,
+            Json(StatusResponse {
+                status: "gone",
+                message: "Secret has expired or been burned".to_string(),
+            }),
+        )
+            .into_response(),
         Err(e) => {
             error!("Database error checking {}: {}", id, e);
             (
@@ -307,7 +320,8 @@ async fn check_secret_handler(
                     status: "error",
                     message: "Internal server error".to_string(),
                 }),
-            ).into_response()
+            )
+                .into_response()
         }
     }
 }
@@ -337,7 +351,8 @@ async fn get_secret_handler(
                 status: "error",
                 message: "Invalid secret ID".to_string(),
             }),
-        ).into_response();
+        )
+            .into_response();
     }
 
     match db::fetch_and_increment_view(&pool, &id).await {
@@ -358,17 +373,17 @@ async fn get_secret_handler(
                     remaining_views: remaining,
                     total_views: row.views,
                 }),
-            ).into_response()
+            )
+                .into_response()
         }
-        Ok(None) => {
-            (
-                StatusCode::GONE,
-                Json(StatusResponse {
-                    status: "gone",
-                    message: "Secret has expired or been burned".to_string(),
-                }),
-            ).into_response()
-        }
+        Ok(None) => (
+            StatusCode::GONE,
+            Json(StatusResponse {
+                status: "gone",
+                message: "Secret has expired or been burned".to_string(),
+            }),
+        )
+            .into_response(),
         Err(e) => {
             error!("Database error fetching {}: {}", id, e);
             (
@@ -377,7 +392,8 @@ async fn get_secret_handler(
                     status: "error",
                     message: "Internal server error".to_string(),
                 }),
-            ).into_response()
+            )
+                .into_response()
         }
     }
 }

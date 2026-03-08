@@ -3,7 +3,7 @@
 //! All functions operate on a shared SQLite connection pool.
 //! Mutations use explicit transactions to ensure atomicity.
 
-use crate::models::{SecretRow, SecretCheckData, StoreRequest};
+use crate::models::{SecretCheckData, SecretRow, StoreRequest};
 use sqlx::{Pool, Sqlite};
 use tracing::info;
 
@@ -17,9 +17,9 @@ pub async fn check_secret_exists(
     id: &str,
 ) -> Result<Option<SecretCheckData>, sqlx::Error> {
     let now = time::OffsetDateTime::now_utc().unix_timestamp();
-    
+
     let row: Option<SecretCheckData> = sqlx::query_as::<_, SecretCheckData>(
-        "SELECT max_views, views, expires_at FROM secrets WHERE id = ? AND expires_at > ?"
+        "SELECT max_views, views, expires_at FROM secrets WHERE id = ? AND expires_at > ?",
     )
     .bind(id)
     .bind(now)
@@ -112,7 +112,7 @@ pub async fn fetch_and_increment_view(
 ) -> Result<Option<SecretRow>, sqlx::Error> {
     let mut tx = pool.begin().await?;
     let now = time::OffsetDateTime::now_utc().unix_timestamp();
-    
+
     let row: Option<SecretRow> = sqlx::query_as::<_, SecretRow>(
         "SELECT id, ciphertext, iv, salt, max_views, views, expires_at FROM secrets WHERE id = ? AND expires_at > ?"
     )
@@ -134,10 +134,10 @@ pub async fn fetch_and_increment_view(
         sqlx::query!("UPDATE secrets SET views = views + 1 WHERE id = ?", id)
             .execute(&mut *tx)
             .await?;
-        
+
         // Reflect the increment in the returned data so callers see accurate counts
         r.views += 1;
-        
+
         tx.commit().await?;
         info!("Secret {} accessed. View count incremented.", id);
         Ok(Some(r))
@@ -153,16 +153,16 @@ pub async fn fetch_and_increment_view(
 /// Returns the number of rows deleted.
 pub async fn purge_expired(pool: &Pool<Sqlite>) -> Result<u64, sqlx::Error> {
     let now = time::OffsetDateTime::now_utc().unix_timestamp();
-    
+
     let result = sqlx::query!("DELETE FROM secrets WHERE expires_at < ?", now)
         .execute(pool)
         .await;
-    
+
     match result {
         Ok(r) => {
             info!("Purged {} expired secrets", r.rows_affected());
             Ok(r.rows_affected())
         }
-        Err(e) => Err(e)
+        Err(e) => Err(e),
     }
 }

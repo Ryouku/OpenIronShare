@@ -19,8 +19,7 @@ impl Config {
         Self {
             database_url: env::var("DATABASE_URL")
                 .unwrap_or_else(|_| "sqlite:./ironshare.db".to_string()),
-            host: env::var("IRONSHARE_HOST")
-                .unwrap_or_else(|_| "0.0.0.0".to_string()),
+            host: env::var("IRONSHARE_HOST").unwrap_or_else(|_| "0.0.0.0".to_string()),
             port: env::var("IRONSHARE_PORT")
                 .ok()
                 .and_then(|p| p.parse().ok())

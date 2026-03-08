@@ -1,12 +1,12 @@
 use axum::body::Body;
 use axum::http::{Request, StatusCode};
 use http_body_util::BodyExt;
-use ironshare::models::{StoreRequest};
-use serde_json::{json, Value};
+use ironshare::models::StoreRequest;
+use serde_json::{Value, json};
 use sqlx::sqlite::SqlitePoolOptions;
+use sqlx::{Pool, Sqlite};
 use std::sync::Arc;
 use tower::ServiceExt;
-use sqlx::{Pool, Sqlite};
 
 async fn setup_app() -> axum::Router {
     let pool = SqlitePoolOptions::new()
@@ -28,17 +28,20 @@ fn post_json(uri: &str, body: Value) -> Request<Body> {
         .body(Body::from(body.to_string()))
         .unwrap();
     req.extensions_mut()
-        .insert(axum::extract::ConnectInfo(SocketAddr::from(([127, 0, 0, 1], 0))));
+        .insert(axum::extract::ConnectInfo(SocketAddr::from((
+            [127, 0, 0, 1],
+            0,
+        ))));
     req
 }
 
 fn get(uri: &str) -> Request<Body> {
-    let mut req = Request::builder()
-        .uri(uri)
-        .body(Body::empty())
-        .unwrap();
+    let mut req = Request::builder().uri(uri).body(Body::empty()).unwrap();
     req.extensions_mut()
-        .insert(axum::extract::ConnectInfo(SocketAddr::from(([127, 0, 0, 1], 0))));
+        .insert(axum::extract::ConnectInfo(SocketAddr::from((
+            [127, 0, 0, 1],
+            0,
+        ))));
     req
 }
 
@@ -49,7 +52,10 @@ fn post_empty(uri: &str) -> Request<Body> {
         .body(Body::empty())
         .unwrap();
     req.extensions_mut()
-        .insert(axum::extract::ConnectInfo(SocketAddr::from(([127, 0, 0, 1], 0))));
+        .insert(axum::extract::ConnectInfo(SocketAddr::from((
+            [127, 0, 0, 1],
+            0,
+        ))));
     req
 }
 
@@ -118,7 +124,10 @@ async fn store_rejects_empty_ciphertext() {
         "max_views": 1,
         "ttl_minutes": 60
     });
-    let resp: axum::http::Response<Body> = app.oneshot(post_json("/api/secret", payload)).await.unwrap();
+    let resp: axum::http::Response<Body> = app
+        .oneshot(post_json("/api/secret", payload))
+        .await
+        .unwrap();
     assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
 }
 
@@ -133,7 +142,10 @@ async fn store_rejects_oversized_ciphertext() {
         "max_views": 1,
         "ttl_minutes": 60
     });
-    let resp: axum::http::Response<Body> = app.oneshot(post_json("/api/secret", payload)).await.unwrap();
+    let resp: axum::http::Response<Body> = app
+        .oneshot(post_json("/api/secret", payload))
+        .await
+        .unwrap();
     assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
     let json = body_json(resp).await;
     assert!(json["message"].as_str().unwrap().contains("50KB"));
@@ -149,7 +161,10 @@ async fn store_rejects_zero_ttl() {
         "max_views": 1,
         "ttl_minutes": 0
     });
-    let resp: axum::http::Response<Body> = app.oneshot(post_json("/api/secret", payload)).await.unwrap();
+    let resp: axum::http::Response<Body> = app
+        .oneshot(post_json("/api/secret", payload))
+        .await
+        .unwrap();
     assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
 }
 
@@ -164,7 +179,11 @@ async fn store_rejects_excessive_ttl() {
         "max_views": 1,
         "ttl_minutes": StoreRequest::MAX_TTL_MINUTES + 1
     });
-    let resp: axum::http::Response<Body> = app.clone().oneshot(post_json("/api/secret", payload)).await.unwrap();
+    let resp: axum::http::Response<Body> = app
+        .clone()
+        .oneshot(post_json("/api/secret", payload))
+        .await
+        .unwrap();
     assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
     let json = body_json(resp).await;
     assert!(json["message"].as_str().unwrap().contains("3 hours"));
@@ -177,7 +196,10 @@ async fn store_rejects_excessive_ttl() {
         "max_views": 1,
         "ttl_minutes": StoreRequest::MAX_TTL_MINUTES
     });
-    let resp_ok = app.oneshot(post_json("/api/secret", payload_ok)).await.unwrap();
+    let resp_ok = app
+        .oneshot(post_json("/api/secret", payload_ok))
+        .await
+        .unwrap();
     assert_eq!(resp_ok.status(), StatusCode::CREATED);
 }
 
@@ -191,7 +213,10 @@ async fn store_rejects_negative_max_views() {
         "max_views": -1,
         "ttl_minutes": 60
     });
-    let resp: axum::http::Response<Body> = app.oneshot(post_json("/api/secret", payload)).await.unwrap();
+    let resp: axum::http::Response<Body> = app
+        .oneshot(post_json("/api/secret", payload))
+        .await
+        .unwrap();
     assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
 }
 
@@ -206,7 +231,11 @@ async fn store_rejects_excessive_max_views() {
         "max_views": StoreRequest::MAX_VIEWS + 1,
         "ttl_minutes": 60
     });
-    let resp: axum::http::Response<Body> = app.clone().oneshot(post_json("/api/secret", payload)).await.unwrap();
+    let resp: axum::http::Response<Body> = app
+        .clone()
+        .oneshot(post_json("/api/secret", payload))
+        .await
+        .unwrap();
     assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
     let json = body_json(resp).await;
     assert!(json["message"].as_str().unwrap().contains("5"));
@@ -219,7 +248,10 @@ async fn store_rejects_excessive_max_views() {
         "max_views": StoreRequest::MAX_VIEWS,
         "ttl_minutes": 60
     });
-    let resp_ok = app.oneshot(post_json("/api/secret", payload_ok)).await.unwrap();
+    let resp_ok = app
+        .oneshot(post_json("/api/secret", payload_ok))
+        .await
+        .unwrap();
     assert_eq!(resp_ok.status(), StatusCode::CREATED);
 }
 
@@ -233,7 +265,10 @@ async fn store_rejects_empty_iv() {
         "max_views": 1,
         "ttl_minutes": 60
     });
-    let resp: axum::http::Response<Body> = app.oneshot(post_json("/api/secret", payload)).await.unwrap();
+    let resp: axum::http::Response<Body> = app
+        .oneshot(post_json("/api/secret", payload))
+        .await
+        .unwrap();
     assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
 }
 
@@ -247,7 +282,10 @@ async fn store_rejects_empty_salt() {
         "max_views": 1,
         "ttl_minutes": 60
     });
-    let resp: axum::http::Response<Body> = app.oneshot(post_json("/api/secret", payload)).await.unwrap();
+    let resp: axum::http::Response<Body> = app
+        .oneshot(post_json("/api/secret", payload))
+        .await
+        .unwrap();
     assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
 }
 
@@ -477,22 +515,19 @@ async fn circuit_breaker_rejects_at_capacity() {
 
     for i in 0..5 {
         let id = format!("test_id_{:04}", i);
-        let expires_at = (time::OffsetDateTime::now_utc() + time::Duration::hours(1)).unix_timestamp();
-        let stored = ironshare::db::store_secret(
-            &pool, &id, &req, expires_at, 5,
-        )
-        .await
-        .unwrap();
+        let expires_at =
+            (time::OffsetDateTime::now_utc() + time::Duration::hours(1)).unix_timestamp();
+        let stored = ironshare::db::store_secret(&pool, &id, &req, expires_at, 5)
+            .await
+            .unwrap();
         assert!(stored, "Secret {} should be stored", i);
     }
 
     // 6th should be rejected
     let expires_at = (time::OffsetDateTime::now_utc() + time::Duration::hours(1)).unix_timestamp();
-    let stored = ironshare::db::store_secret(
-        &pool, "overflow", &req, expires_at, 5,
-    )
-    .await
-    .unwrap();
+    let stored = ironshare::db::store_secret(&pool, "overflow", &req, expires_at, 5)
+        .await
+        .unwrap();
     assert!(!stored, "Should be rejected at capacity");
 }
 
@@ -529,11 +564,9 @@ async fn circuit_breaker_ignores_expired_secrets() {
         ttl_minutes: 60,
     };
     let expires_at = (time::OffsetDateTime::now_utc() + time::Duration::hours(1)).unix_timestamp();
-    let stored = ironshare::db::store_secret(
-        &pool, "new_one", &req, expires_at, 5,
-    )
-    .await
-    .unwrap();
+    let stored = ironshare::db::store_secret(&pool, "new_one", &req, expires_at, 5)
+        .await
+        .unwrap();
     assert!(stored, "Expired secrets should not count toward limit");
 }
 
@@ -552,7 +585,10 @@ async fn expired_secret_returns_gone_on_retrieve() {
     .unwrap();
 
     let app = ironshare::handlers::router(Arc::new(pool));
-    let resp = app.oneshot(post_empty("/api/secret/exp_ret")).await.unwrap();
+    let resp = app
+        .oneshot(post_empty("/api/secret/exp_ret"))
+        .await
+        .unwrap();
     assert_eq!(resp.status(), StatusCode::GONE);
 }
 
@@ -616,7 +652,9 @@ async fn purge_deletes_expired_and_keeps_active() {
         .unwrap();
     assert_eq!(remaining.0, 1);
 
-    let row = ironshare::db::check_secret_exists(&pool, "keep").await.unwrap();
+    let row = ironshare::db::check_secret_exists(&pool, "keep")
+        .await
+        .unwrap();
     assert!(row.is_some());
 }
 
@@ -629,29 +667,21 @@ async fn responses_include_security_headers() {
     assert_eq!(resp.status(), StatusCode::OK);
 
     let headers = resp.headers();
-    assert_eq!(
-        headers.get("x-frame-options").unwrap(),
-        "DENY"
-    );
-    assert_eq!(
-        headers.get("x-content-type-options").unwrap(),
-        "nosniff"
-    );
-    assert_eq!(
-        headers.get("referrer-policy").unwrap(),
-        "no-referrer"
-    );
+    assert_eq!(headers.get("x-frame-options").unwrap(), "DENY");
+    assert_eq!(headers.get("x-content-type-options").unwrap(), "nosniff");
+    assert_eq!(headers.get("referrer-policy").unwrap(), "no-referrer");
     assert!(
         headers.get("content-security-policy").is_some(),
         "CSP header must be present"
     );
-    let csp = headers.get("content-security-policy").unwrap().to_str().unwrap();
+    let csp = headers
+        .get("content-security-policy")
+        .unwrap()
+        .to_str()
+        .unwrap();
     assert!(csp.contains("default-src 'none'"));
     assert!(csp.contains("script-src 'self'"));
-    assert_eq!(
-        headers.get("cache-control").unwrap(),
-        "no-store"
-    );
+    assert_eq!(headers.get("cache-control").unwrap(), "no-store");
 }
 
 // ─── Static Asset: /crypto.js ───
@@ -662,13 +692,28 @@ async fn crypto_js_returns_javascript() {
     let resp = app.oneshot(get("/crypto.js")).await.unwrap();
     assert_eq!(resp.status(), StatusCode::OK);
 
-    let ct = resp.headers().get("content-type").unwrap().to_str().unwrap();
-    assert!(ct.contains("javascript"), "Expected JavaScript content-type, got: {}", ct);
+    let ct = resp
+        .headers()
+        .get("content-type")
+        .unwrap()
+        .to_str()
+        .unwrap();
+    assert!(
+        ct.contains("javascript"),
+        "Expected JavaScript content-type, got: {}",
+        ct
+    );
 
     let body = resp.into_body().collect().await.unwrap().to_bytes();
     let text = String::from_utf8(body.to_vec()).unwrap();
-    assert!(text.contains("IronCrypto"), "crypto.js must define IronCrypto");
-    assert!(text.contains("600"), "crypto.js must reference 600k iterations");
+    assert!(
+        text.contains("IronCrypto"),
+        "crypto.js must define IronCrypto"
+    );
+    assert!(
+        text.contains("600"),
+        "crypto.js must reference 600k iterations"
+    );
 }
 
 // ─── Oversized ID Rejection ───
@@ -710,11 +755,15 @@ async fn store_rejects_invalid_json() {
         .body(Body::from("not valid json {{{"))
         .unwrap();
     req.extensions_mut()
-        .insert(axum::extract::ConnectInfo(SocketAddr::from(([127, 0, 0, 1], 0))));
+        .insert(axum::extract::ConnectInfo(SocketAddr::from((
+            [127, 0, 0, 1],
+            0,
+        ))));
 
     let resp = app.oneshot(req).await.unwrap();
     assert!(
-        resp.status() == StatusCode::BAD_REQUEST || resp.status() == StatusCode::UNPROCESSABLE_ENTITY,
+        resp.status() == StatusCode::BAD_REQUEST
+            || resp.status() == StatusCode::UNPROCESSABLE_ENTITY,
         "Expected 400 or 422 for malformed JSON, got {}",
         resp.status()
     );
@@ -724,9 +773,13 @@ async fn store_rejects_invalid_json() {
 async fn store_rejects_missing_required_fields() {
     let app = setup_app().await;
     let payload = json!({ "ciphertext": "abc" });
-    let resp = app.oneshot(post_json("/api/secret", payload)).await.unwrap();
+    let resp = app
+        .oneshot(post_json("/api/secret", payload))
+        .await
+        .unwrap();
     assert!(
-        resp.status() == StatusCode::BAD_REQUEST || resp.status() == StatusCode::UNPROCESSABLE_ENTITY,
+        resp.status() == StatusCode::BAD_REQUEST
+            || resp.status() == StatusCode::UNPROCESSABLE_ENTITY,
         "Expected 400 or 422 for missing fields, got {}",
         resp.status()
     );
@@ -754,11 +807,9 @@ async fn concurrent_reads_never_exceed_max_views() {
         ttl_minutes: 60,
     };
     let expires_at = (time::OffsetDateTime::now_utc() + time::Duration::hours(1)).unix_timestamp();
-    ironshare::db::store_secret(
-        &pool, "race_test", &req, expires_at, 1000,
-    )
-    .await
-    .unwrap();
+    ironshare::db::store_secret(&pool, "race_test", &req, expires_at, 1000)
+        .await
+        .unwrap();
 
     let mut handles = Vec::new();
     for _ in 0..20 {
@@ -817,7 +868,9 @@ async fn check_exists_returns_none_when_views_exhausted() {
     .await
     .unwrap();
 
-    let result = ironshare::db::check_secret_exists(&pool, "used_up").await.unwrap();
+    let result = ironshare::db::check_secret_exists(&pool, "used_up")
+        .await
+        .unwrap();
     assert!(result.is_none(), "Should return None when views exhausted");
 }
 
@@ -835,8 +888,13 @@ async fn check_exists_returns_data_for_unlimited_views() {
     .await
     .unwrap();
 
-    let result = ironshare::db::check_secret_exists(&pool, "unlim").await.unwrap();
-    assert!(result.is_some(), "Unlimited secret should always be available");
+    let result = ironshare::db::check_secret_exists(&pool, "unlim")
+        .await
+        .unwrap();
+    assert!(
+        result.is_some(),
+        "Unlimited secret should always be available"
+    );
 }
 
 // ─── Validation Error Messages ───
@@ -846,9 +904,18 @@ async fn validation_errors_include_descriptive_messages() {
     let app = setup_app().await;
 
     let cases = vec![
-        (json!({"ciphertext": "", "iv": "x", "salt": "x", "max_views": 1, "ttl_minutes": 60}), "empty"),
-        (json!({"ciphertext": "x", "iv": "x", "salt": "x", "max_views": -1, "ttl_minutes": 60}), "negative"),
-        (json!({"ciphertext": "x", "iv": "x", "salt": "x", "max_views": 1, "ttl_minutes": 0}), "TTL"),
+        (
+            json!({"ciphertext": "", "iv": "x", "salt": "x", "max_views": 1, "ttl_minutes": 60}),
+            "empty",
+        ),
+        (
+            json!({"ciphertext": "x", "iv": "x", "salt": "x", "max_views": -1, "ttl_minutes": 60}),
+            "negative",
+        ),
+        (
+            json!({"ciphertext": "x", "iv": "x", "salt": "x", "max_views": 1, "ttl_minutes": 0}),
+            "TTL",
+        ),
     ];
 
     for (payload, label) in cases {
